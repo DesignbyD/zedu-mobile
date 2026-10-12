@@ -1,3 +1,4 @@
+
 import { navigate } from '@/navigation/root-navigation';
 import { ACTIONS } from '@/store/types';
 import { GetRequest } from '@/utils/requests';
@@ -62,9 +63,11 @@ export function parseMessageNotificationPayload(
   if (!data || typeof data !== 'object') return null;
 
   const notificationType = data.notification_type;
+
   if (!MESSAGE_NOTIFICATION_TYPES.has(notificationType)) return null;
 
   const channelId = data.channel_id || data.channels_id;
+
   if (!channelId) return null;
 
   return {
@@ -85,9 +88,48 @@ export function clearPendingMessageNotification() {
   pendingPayload = null;
 }
 
+export function markThreadAsRead(
+  dispatch: (action: any) => void,
+  threadType: MessageNotificationType,
+  channelId?: string,
+) {
+  if (!channelId) return;
+
+  if (threadType === 'channel') {
+    dispatch({
+      type: ACTIONS.RESET_CHANNEL_THREAD_COUNT,
+      payload: channelId,
+    });
+    return;
+  }
+
+  dispatch({
+    type: ACTIONS.RESET_DM_THREAD_COUNT,
+    payload: channelId,
+  });
+}
+
 function channelIdsMatch(channel: any, channelId: string): boolean {
   return (
-    channel?.channels_id === channelId || channel?.channel_id === channelId
+    String(channel?.channels_id ?? '') === channelId ||
+    String(channel?.channel_id ?? '') === channelId
+  );
+}
+
+/**
+ * Finds a thread's parent message in the cached conversation preview.
+ * If the parent is not cached, callers fall back to opening the main chat.
+ */
+function findThreadParent(
+  previewThread: any,
+  threadId?: string,
+): any | null {
+  if (!threadId || !Array.isArray(previewThread)) return null;
+
+  return (
+    previewThread.find(
+      (message: any) => String(message?.thread_id ?? '') === threadId,
+    ) ?? null
   );
 }
 
@@ -95,12 +137,14 @@ async function resolveChannel(
   channelId: string,
   userChannels: any[] | null | undefined,
 ) {
-  const cached = (userChannels || []).find(ch =>
-    channelIdsMatch(ch, channelId),
+  const cached = (userChannels || []).find((channel: any) =>
+    channelIdsMatch(channel, channelId),
   );
+
   if (cached) return cached;
 
-  const { data, error } = await GetRequest(`/channels/${channelId}`);
+  const { data, error } = await GetRequest('/channels/' + channelId);
+
   if (error || !data?.data) return null;
 
   return data.data;
@@ -114,78 +158,150 @@ export async function openChatFromNotification(
 
   if (payload.notification_type === 'dm') {
     const chat = (dms || []).find(
-      (d: any) =>
-        d.channel_id === payload.channel_id && d.channel_type === 'dm',
+      (item: any) =>
+        String(item.channel_id) === payload.channel_id &&
+        item.channel_type === 'dm',
     );
 
     if (chat) {
-      dispatch({ type: ACTIONS.PARTICIPANT, payload: chat.participants });
+      dispatch({
+        type: ACTIONS.PARTICIPANT,
+        payload: chat.participants,
+      });
+
       dispatch({
         type: ACTIONS.DMS_CHAT,
         payload: { data: chat.preview_thread, page: 1 },
       });
     }
 
-    navigate('ChatStack', {
-      screen: 'ChatDetails',
-      params: {
-        channel_id: payload.channel_id,
-        participant_id: payload.participant_id || chat?.participant_id,
-        fromNotification: true,
-      },
-    });
+    const threadParent = findThreadParent(
+      chat?.preview_thread,
+      payload.thread_id,
+    );
 
-    if (chat?.thread_count > 0) {
+    if (threadParent && payload.thread_id) {
       dispatch({
-        type: ACTIONS.RESET_DM_THREAD_COUNT,
-        payload: payload.channel_id,
+        type: ACTIONS.SELECTED_MSG,
+        payload: threadParent,
+      });
+
+      dispatch({
+        type: ACTIONS.REPLY_CHAT,
+        payload: {
+          data: threadParent.preview_reply ?? [],
+          page: 1,
+        },
+      });
+
+      navigate('ChatStack', {
+        screen: 'ChatThreadScreen',
+        params: {
+          channel_id: payload.channel_id,
+          thread_id: payload.thread_id,
+          chatType: 'dm',
+        },
+      });
+    } else {
+      navigate('ChatStack', {
+        screen: 'ChatDetails',
+        params: {
+          channel_id: payload.channel_id,
+          participant_id: payload.participant_id || chat?.participant_id,
+          fromNotification: true,
+        },
       });
     }
 
-    dispatch({ type: ACTIONS.CALLBACK, payload: !callback });
+    markThreadAsRead(dispatch, 'dm', payload.channel_id);
+
+    dispatch({
+      type: ACTIONS.CALLBACK,
+      payload: !callback,
+    });
+
     return true;
   }
 
   if (payload.notification_type === 'group_dm') {
     const chat = (dms || []).find(
-      (d: any) =>
-        d.channel_id === payload.channel_id && d.channel_type === 'group_dm',
+      (item: any) =>
+        String(item.channel_id) === payload.channel_id &&
+        item.channel_type === 'group_dm',
     );
 
     if (chat) {
-      dispatch({ type: ACTIONS.PARTICIPANT, payload: chat.participants });
+      dispatch({
+        type: ACTIONS.PARTICIPANT,
+        payload: chat.participants,
+      });
+
       dispatch({
         type: ACTIONS.DMS_CHAT,
         payload: { data: chat.preview_thread, page: 1 },
       });
     }
 
-    navigate('ChatStack', {
-      screen: 'GroupChatDetails',
-      params: {
-        channel_id: payload.channel_id,
-        fromNotification: true,
-      },
-    });
+    const threadParent = findThreadParent(
+      chat?.preview_thread,
+      payload.thread_id,
+    );
 
-    if (chat?.thread_count > 0) {
+    if (threadParent && payload.thread_id) {
       dispatch({
-        type: ACTIONS.RESET_DM_THREAD_COUNT,
-        payload: payload.channel_id,
+        type: ACTIONS.SELECTED_MSG,
+        payload: threadParent,
+      });
+
+      dispatch({
+        type: ACTIONS.REPLY_CHAT,
+        payload: {
+          data: threadParent.preview_reply ?? [],
+          page: 1,
+        },
+      });
+
+      navigate('ChatStack', {
+        screen: 'GroupChatThreadScreen',
+        params: {
+          channel_id: payload.channel_id,
+          thread_id: payload.thread_id,
+        },
+      });
+    } else {
+      navigate('ChatStack', {
+        screen: 'GroupChatDetails',
+        params: {
+          channel_id: payload.channel_id,
+          fromNotification: true,
+        },
       });
     }
 
-    dispatch({ type: ACTIONS.CALLBACK, payload: !callback });
+    markThreadAsRead(dispatch, 'group_dm', payload.channel_id);
+
+    dispatch({
+      type: ACTIONS.CALLBACK,
+      payload: !callback,
+    });
+
     return true;
   }
 
   const channel = await resolveChannel(payload.channel_id, userChannels);
 
   if (channel) {
-    dispatch({ type: ACTIONS.CHANNEL, payload: channel });
+    dispatch({
+      type: ACTIONS.CHANNEL,
+      payload: channel,
+    });
+
     dispatch({
       type: ACTIONS.CHANNELS_CHAT,
-      payload: { data: channel.preview_thread || [], page: 1 },
+      payload: {
+        data: channel.preview_thread || [],
+        page: 1,
+      },
     });
   } else {
     dispatch({
@@ -195,28 +311,63 @@ export async function openChatFromNotification(
         channel_id: payload.channel_id,
       },
     });
+
     dispatch({
       type: ACTIONS.CHANNELS_CHAT,
-      payload: { data: [], page: 1 },
+      payload: {
+        data: [],
+        page: 1,
+      },
     });
   }
 
-  navigate('ChannelStack', {
-    screen: 'ChannelChat',
-    params: {
-      channel_id: payload.channel_id,
-      fromNotification: true,
-    },
+  const threadParent = findThreadParent(
+    channel?.preview_thread,
+    payload.thread_id,
+  );
+
+  if (threadParent && payload.thread_id) {
+    dispatch({
+      type: ACTIONS.SELECTED_MSG,
+      payload: threadParent,
+    });
+
+    dispatch({
+      type: ACTIONS.REPLY_CHAT,
+      payload: {
+        data: threadParent.preview_reply ?? [],
+        page: 1,
+      },
+    });
+
+    navigate('ChannelStack', {
+      screen: 'ChannelThread',
+      params: {
+        channel_id: payload.channel_id,
+        thread_id: payload.thread_id,
+      },
+    });
+  } else {
+    navigate('ChannelStack', {
+      screen: 'ChannelChat',
+      params: {
+        channel_id: payload.channel_id,
+        fromNotification: true,
+      },
+    });
+  }
+
+  markThreadAsRead(
+    dispatch,
+    'channel',
+    channel?.channels_id || payload.channel_id,
+  );
+
+  dispatch({
+    type: ACTIONS.CHANNEL_CALLBACK,
+    payload: !channelCallback,
   });
 
-  if (channel?.thread_count > 0) {
-    dispatch({
-      type: ACTIONS.RESET_CHANNEL_THREAD_COUNT,
-      payload: channel.channels_id || payload.channel_id,
-    });
-  }
-
-  dispatch({ type: ACTIONS.CHANNEL_CALLBACK, payload: !channelCallback });
   return true;
 }
 
@@ -227,6 +378,7 @@ export async function handleMessageNotificationClick(
 ): Promise<void> {
   const resolved = resolveNotificationPayload(rawNotification);
   const payload = parseMessageNotificationPayload(resolved);
+
   if (!payload) return;
 
   if (!options.isReady) {
@@ -235,6 +387,7 @@ export async function handleMessageNotificationClick(
   }
 
   clearPendingMessageNotification();
+
   await openChatFromNotification(payload, deps);
 }
 
@@ -245,6 +398,8 @@ export async function consumePendingMessageNotification(
   if (!options.isReady || !pendingPayload) return;
 
   const payload = pendingPayload;
+
   clearPendingMessageNotification();
+
   await openChatFromNotification(payload, deps);
 }

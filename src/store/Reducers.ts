@@ -270,7 +270,8 @@ const reducers = (state: AppState, action: Action): AppState => {
       return {
         ...state,
         dms: state.dms.map(chat =>
-          chat.channel_id === action.payload && chat.thread_count > 0
+          String(chat.channel_id ?? '') === String(action.payload) &&
+          chat.thread_count > 0
             ? { ...chat, thread_count: 0 }
             : chat,
         ),
@@ -626,12 +627,13 @@ const reducers = (state: AppState, action: Action): AppState => {
       return {
         ...state,
         dms: state.dms.map(chat =>
-          chat.channel_id === action.payload && chat.thread_count > 0
+          String(chat.channel_id ?? '') === String(action.payload) &&
+          chat.thread_count > 0
             ? { ...chat, thread_count: 0 }
             : chat,
         ),
         userChannels: state.userChannels.map(channel =>
-          channel.channels_id === action.payload &&
+          String(channel.channels_id ?? '') === String(action.payload) &&
           (channel.thread_count > 0 || channel.mention_count > 0)
             ? { ...channel, thread_count: 0, mention_count: 0 }
             : channel,

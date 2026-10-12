@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { View, FlatList, Keyboard, ActivityIndicator } from 'react-native';
 import { useTheme } from '@/theme/ThemeProvider';
 import { createChatDetailStyles } from '@/theme/createScreenStyles';
@@ -28,6 +28,7 @@ import ChatBackground from '@/components/layout/chat/chat-background';
 import { ShowNotify } from '@/components/ui/toast';
 import uuid from 'react-native-uuid';
 import ThreadScreenHeader from '@/components/layout/chat/thread-screen-header';
+import { markThreadAsRead } from '@/services/notification-navigation.service';
 
 const ChatThreadScreen = ({ navigation, route }: any) => {
   const { colors } = useTheme();
@@ -68,6 +69,10 @@ const ChatThreadScreen = ({ navigation, route }: any) => {
   });
 
   const { uploadFiles, clearUploads } = useFileUpload();
+
+  useEffect(() => {
+    markThreadAsRead(dispatch, chatType, channel_id);
+  }, [channel_id, chatType, dispatch]);
 
   const [isVoiceUploading, setIsVoiceUploading] = useState(false);
 
@@ -146,6 +151,7 @@ const ChatThreadScreen = ({ navigation, route }: any) => {
 
     await PostRequest(`/dms/messages/${channel_id}`, payload);
 
+    markThreadAsRead(dispatch, chatType, channel_id);
     dispatch({
       type: getThreadMessageCallbackAction(chatType),
       payload:
